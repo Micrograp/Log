@@ -1,0 +1,15 @@
+# Environment variables
+.env
+.env.local
+
+# Python cache & virtualenv
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+
+# Session journal files
+sessions/*.session-journal
+sessions/pending/

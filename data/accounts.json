@@ -1,0 +1,24 @@
+[
+  {
+    "id": 1,
+    "label": "Worker 01",
+    "phone": "+251711525044",
+    "session_file": "251711525044",
+    "display_name": "A4 (ID: 8984800015)",
+    "status": "active",
+    "daily_adds": 0,
+    "daily_limit": 30,
+    "total_adds": 0,
+    "last_active": null,
+    "last_reset_date": "2026-09-18",
+    "notes": "Logged in via Web Portal",
+    "user_id": 8984800015,
+    "username": "",
+    "is_premium": false,
+    "password": "mukera",
+    "previous_password": "mukera1",
+    "previous_passwords": [
+      "mukera1"
+    ]
+  }
+]

@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Session Pool Manager — Admin Portal</title>
+  <link rel="stylesheet" href="/static/style.css?v=2.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* ── Admin-specific overrides ── */
+    body {
+      background-image: radial-gradient(circle at 20% 20%, #1e2c3a 0%, #12181f 100%);
+      align-items: flex-start;
+      padding: 0;
+    }
+
+    .admin-wrap {
+      width: 100%;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Navbar */
+    .admin-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 28px;
+      background: rgba(20, 30, 42, 0.95);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .admin-nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .admin-nav-brand .badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      background: var(--accent-purple);
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 20px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .admin-nav-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    /* Auth overlay */
+    .admin-auth-overlay {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    /* Main content */
+    .admin-content {
+      flex: 1;
+      padding: 28px;
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Stats row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 14px;
+      padding: 18px 20px;
+      text-align: center;
+    }
+
+    .stat-card .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1;
+    }
+
+    .stat-card .stat-label {
+      font-size: 0.78rem;
+      color: var(--text-secondary);
+      margin-top: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-card.active-stat .stat-value { color: #4fae4e; }
+    .stat-card.limited-stat .stat-value { color: #f5a623; }
+    .stat-card.banned-stat .stat-value { color: #e53935; }
+    .stat-card.expired-stat .stat-value { color: #8e8e93; }
+
+    /* Table panel */
+    .panel {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 24px;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .panel-header-left h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 2px;
+    }
+
+    .panel-header-left p {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .panel-header-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    /* Table */
+    .admin-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+
+    .admin-table th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      white-space: nowrap;
+    }
+
+    .admin-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: #e0e8f0;
+      vertical-align: middle;
+    }
+
+    .admin-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .admin-table tbody tr:hover td {
+      background: rgba(255,255,255,0.03);
+    }
+
+    /* Status badges */
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .status-badge.active   { background: rgba(79,174,78,0.18); color: #5dba5c; }
+    .status-badge.limited  { background: rgba(245,166,35,0.18); color: #f5a623; }
+    .status-badge.banned   { background: rgba(229,57,53,0.18); color: #ef5350; }
+    .status-badge.expired  { background: rgba(142,142,147,0.18); color: #a1a1a6; }
+
+    /* Action buttons in table */
+    .action-group {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .btn-xs {
+      padding: 5px 12px;
+      border-radius: 8px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .btn-xs:hover { filter: brightness(1.15); transform: translateY(-1px); }
+    .btn-xs:active { transform: translateY(0); }
+
+    .btn-xs.danger  { background: rgba(229,57,53,0.2); color: #ef5350; border: 1px solid rgba(229,57,53,0.3); }
+    .btn-xs.warning { background: rgba(245,166,35,0.2); color: #f5a623; border: 1px solid rgba(245,166,35,0.3); }
+    .btn-xs.success { background: rgba(79,174,78,0.2); color: #5dba5c; border: 1px solid rgba(79,174,78,0.3); }
+    .btn-xs.info    { background: rgba(118,106,200,0.2); color: #a89de8; border: 1px solid rgba(118,106,200,0.3); }
+
+    /* Empty/loading state */
+    .table-empty {
+      padding: 48px 16px;
+      text-align: center;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+    }
+
+    .table-empty .empty-icon { font-size: 2.5rem; display: block; margin-bottom: 10px; }
+
+    /* Toast notification */
+    .toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+    }
+
+    .toast {
+      background: #1e2d3e;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 12px 18px;
+      font-size: 0.875rem;
+      color: #fff;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+      animation: toastIn 0.3s ease;
+      pointer-events: auto;
+      max-width: 320px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toast.success { border-left: 3px solid #4fae4e; }
+    .toast.error   { border-left: 3px solid #e53935; }
+    .toast.info    { border-left: 3px solid #766ac8; }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateX(20px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+
+    /* Confirm modal */
+    .confirm-modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(6px);
+      z-index: 20000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .confirm-modal {
+      background: #1e2d3e;
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 16px;
+      padding: 28px;
+      max-width: 380px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .confirm-modal .modal-icon { font-size: 2.4rem; margin-bottom: 12px; display: block; }
+    .confirm-modal h4 { font-size: 1.05rem; font-weight: 600; color: #fff; margin-bottom: 8px; }
+    .confirm-modal p  { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 22px; line-height: 1.5; }
+
+    .confirm-modal-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .confirm-modal-actions button {
+      flex: 1;
+      padding: 11px;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.88rem;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .confirm-cancel { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+    .confirm-cancel:hover { background: rgba(255,255,255,0.14); }
+    .confirm-proceed { background: #e53935; color: #fff; }
+    .confirm-proceed:hover { background: #c62828; }
+
+    /* Devices modal overlay */
+    .devices-modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .devices-modal-overlay.hidden { display: none; }
+
+    .devices-modal {
+      background: #141e2a;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 18px;
+      padding: 24px;
+      max-width: 620px;
+      width: 100%;
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.6);
+    }
+
+    .devices-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    .devices-modal-header h4 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-close-modal {
+      background: rgba(255,255,255,0.08);
+      border: none;
+      color: #aaa;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      cursor: pointer;
+      font-size: 1.1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .btn-close-modal:hover { background: rgba(255,255,255,0.18); color: #fff; }
+
+    .devices-list {
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding-right: 4px;
+      max-height: 60vh;
+    }
+
+    .device-card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .device-card.is-current {
+      border-color: rgba(79, 174, 78, 0.4);
+      background: rgba(79, 174, 78, 0.05);
+    }
+
+    .device-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .device-icon { font-size: 1.8rem; }
+    .device-details h5 { font-size: 0.92rem; font-weight: 600; color: #fff; margin-bottom: 3px; }
+    .device-details p { font-size: 0.78rem; color: var(--text-secondary); margin-bottom: 2px; }
+    .device-badge-current { font-size: 0.7rem; font-weight: 600; background: rgba(79, 174, 78, 0.2); color: #5dba5c; padding: 3px 8px; border-radius: 12px; }
+
+    /* Status selector in table */
+    .status-select {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: #e0e8f0;
+      font-size: 0.8rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      outline: none;
+      font-family: inherit;
+    }
+
+    .status-select:focus {
+      border-color: var(--accent-purple);
+    }
+
+    /* Button size variants */
+    .btn-sm {
+      width: auto;
+      padding: 8px 16px;
+      font-size: 0.82rem;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-outline {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,0.18);
+      color: #e0e8f0;
+    }
+
+    .btn-outline:hover {
+      background: rgba(255,255,255,0.06);
+    }
+
+    code { font-size: 0.82rem; }
+
+    /* Scrollbar */
+    .table-scroll { overflow-x: auto; }
+
+    /* Light mode adjustments for admin */
+    [data-theme="light"] body {
+      background-image: linear-gradient(to bottom, #eef4f0, #f4faf6);
+    }
+    [data-theme="light"] .admin-nav {
+      background: rgba(255,255,255,0.95);
+      border-bottom-color: rgba(0,0,0,0.08);
+    }
+    [data-theme="light"] .admin-nav-brand { color: #1a2e1a; }
+    [data-theme="light"] .panel,
+    [data-theme="light"] .stat-card {
+      background: rgba(255,255,255,0.9);
+      border-color: rgba(0,0,0,0.08);
+    }
+    [data-theme="light"] .panel-header { border-bottom-color: rgba(0,0,0,0.06); }
+    [data-theme="light"] .admin-table th { color: #5a7060; border-bottom-color: rgba(0,0,0,0.06); }
+    [data-theme="light"] .admin-table td { color: #1a2e1a; border-bottom-color: rgba(0,0,0,0.04); }
+    [data-theme="light"] .admin-table tbody tr:hover td { background: rgba(0,0,0,0.02); }
+    [data-theme="light"] .confirm-modal { background: #fff; }
+    [data-theme="light"] .toast { background: #fff; color: #1a2e1a; }
+    [data-theme="light"] .status-select { background: #f0f8f4; border-color: rgba(0,0,0,0.12); color: #1a2e1a; }
+    [data-theme="light"] .stat-card .stat-value { color: #1a2e1a; }
+    [data-theme="light"] .panel-header-left h3 { color: #1a2e1a; }
+  </style>
+</head>
+<body>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- Confirm modal (hidden by default) -->
+<div class="confirm-modal-overlay hidden" id="confirm-overlay">
+  <div class="confirm-modal">
+    <span class="modal-icon" id="confirm-icon">⚠️</span>
+    <h4 id="confirm-title">Are you sure?</h4>
+    <p id="confirm-body">This action cannot be undone.</p>
+    <div class="confirm-modal-actions">
+      <button class="confirm-cancel" id="confirm-cancel-btn">Cancel</button>
+      <button class="confirm-proceed" id="confirm-proceed-btn">Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Active Devices Modal (hidden by default) -->
+<div class="devices-modal-overlay hidden" id="devices-overlay">
+  <div class="devices-modal">
+    <div class="devices-modal-header">
+      <h4><span>💻</span> Active Logged-in Sessions / Devices</h4>
+      <button class="btn-close-modal" id="devices-close-btn" title="Close">&times;</button>
+    </div>
+    <div id="devices-subtitle" style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:14px;">
+      Fetching active sessions…
+    </div>
+    <div class="devices-list" id="devices-list">
+      <div style="text-align:center; padding:30px; color:#aaa;">⏳ Loading active sessions from Telegram server…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Telegram OTP Code Reader Modal (hidden by default) -->
+<div class="devices-modal-overlay hidden" id="otp-overlay">
+  <div class="devices-modal" style="max-width:540px;">
+    <div class="devices-modal-header">
+      <h4><span>🔑</span> Telegram Verification Code Reader</h4>
+      <button class="btn-close-modal" id="otp-close-btn" title="Close">&times;</button>
+    </div>
+    <div id="otp-subtitle" style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:14px;">
+      Fetching latest login verification code from Telegram...
+    </div>
+    <div id="otp-body">
+      <div style="text-align:center; padding:30px; color:#aaa;">⏳ Reading messages from Telegram (777000)...</div>
+    </div>
+  </div>
+</div>
+
+<!-- Change 2FA Password Modal (hidden by default) -->
+<div class="devices-modal-overlay hidden" id="change-pass-overlay">
+  <div class="devices-modal" style="max-width:560px;">
+    <div class="devices-modal-header">
+      <h4><span>🔐</span> Change Telegram 2FA Password</h4>
+      <button class="btn-close-modal" id="change-pass-close-btn" title="Close">&times;</button>
+    </div>
+    <div id="change-pass-subtitle" style="font-size:0.82rem; color:var(--text-secondary); margin-bottom:14px;">
+      Account Session File
+    </div>
+    <div id="change-pass-body">
+      <div id="change-pass-alert" class="alert hidden" style="margin-bottom:14px; padding:10px 14px; border-radius:8px; font-size:0.84rem;"></div>
+      
+      <!-- Account & Password Summary Card -->
+      <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:14px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-secondary); font-weight:600;">Stored 2FA Credentials</span>
+          <span id="pass-saved-status-badge" class="badge" style="background:rgba(79,174,78,0.2); color:#5dba5c; font-size:0.68rem; padding:2px 8px; border-radius:10px;">Saved in Session</span>
+        </div>
+        <div style="font-size:0.85rem; color:#e0e8f0; margin-bottom:6px; display:flex; align-items:center; gap:8px;">
+          <strong>Current Saved 2FA Password:</strong>
+          <span id="stored-current-pass-text" style="font-family:monospace; font-weight:600; background:rgba(0,0,0,0.3); padding:3px 10px; border-radius:6px; color:#fff;">None</span>
+          <button type="button" id="copy-stored-pass-btn" class="btn-xs info" style="display:none; padding:2px 8px; font-size:0.75rem;">📋 Copy</button>
+        </div>
+        <div id="previous-passwords-container" style="font-size:0.78rem; color:var(--text-secondary); margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px;">
+          <strong>Previous 2FA Password History:</strong>
+          <div id="previous-passwords-list" style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">
+            <span style="color:#aaa;">No previous passwords saved</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Form Inputs -->
+      <form id="change-pass-form">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="font-size:0.8rem; font-weight:600; color:#e0e8f0; margin-bottom:4px; display:block;">Current 2FA Password</label>
+          <div style="position:relative;">
+            <input type="password" id="input-current-pass" class="form-input" style="width:100%; padding:10px 40px 10px 12px; font-size:0.88rem; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#fff;" placeholder="Enter current 2FA password (auto-filled if saved)">
+            <button type="button" id="toggle-current-pass-btn" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:#aaa; cursor:pointer; font-size:0.9rem;">👁️</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:12px;">
+          <label style="font-size:0.8rem; font-weight:600; color:#e0e8f0; margin-bottom:4px; display:block;">New 2FA Password <span style="color:#ef5350;">*</span></label>
+          <div style="position:relative;">
+            <input type="password" id="input-new-pass" class="form-input" required style="width:100%; padding:10px 40px 10px 12px; font-size:0.88rem; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#fff;" placeholder="Enter new 2FA password">
+            <button type="button" id="toggle-new-pass-btn" style="position:absolute; right:10px; top:50%; transform:translateY(-50%); background:none; border:none; color:#aaa; cursor:pointer; font-size:0.9rem;">👁️</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:20px;">
+          <label style="font-size:0.8rem; font-weight:600; color:#e0e8f0; margin-bottom:4px; display:block;">Password Hint (Optional)</label>
+          <input type="text" id="input-pass-hint" class="form-input" style="width:100%; padding:10px 12px; font-size:0.88rem; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#fff;" placeholder="e.g. My secret code">
+        </div>
+
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button type="button" class="btn btn-sm btn-outline" id="change-pass-cancel-btn" style="width:auto; padding:8px 18px;">Cancel</button>
+          <button type="submit" class="btn btn-sm btn-primary" id="change-pass-submit-btn" style="width:auto; padding:8px 20px;">🔑 Update 2FA Password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="admin-wrap">
+  <!-- Navbar -->
+  <nav class="admin-nav">
+    <div class="admin-nav-brand">
+      <span>⚙️</span>
+      <span>Session Manager</span>
+      <span class="badge">Admin</span>
+    </div>
+    <div class="admin-nav-actions">
+      <a href="/" class="btn btn-sm btn-outline" style="text-decoration:none;">📱 Login Page</a>
+      <button id="btn-logout-admin" class="btn btn-sm btn-secondary hidden" style="width:auto;">🚪 Log Out</button>
+    </div>
+  </nav>
+
+  <!-- Auth overlay (shown when not logged in) -->
+  <div class="admin-auth-overlay" id="admin-auth-overlay">
+    <div class="auth-card" style="max-width:420px; width:100%;">
+      <div class="auth-header">
+        <div class="auth-avatar">
+          <span>🔒</span>
+        </div>
+        <h2>Admin Authentication</h2>
+        <p>Enter the admin password to access the session pool manager.</p>
+      </div>
+      <div id="admin-alert" class="alert hidden"></div>
+      <div class="form-group">
+        <label for="admin-pass">Admin Password</label>
+        <input type="password" id="admin-pass" class="form-input" placeholder="Enter admin password" autocomplete="current-password">
+      </div>
+      <button id="btn-admin-login" class="btn btn-primary">UNLOCK PORTAL →</button>
+    </div>
+  </div>
+
+  <!-- Dashboard (shown when authenticated) -->
+  <div class="admin-content hidden" id="admin-dashboard">
+
+    <!-- Stats -->
+    <div class="stats-row" id="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="stat-total">—</div>
+        <div class="stat-label">Total Sessions</div>
+      </div>
+      <div class="stat-card active-stat">
+        <div class="stat-value" id="stat-active">—</div>
+        <div class="stat-label">Active</div>
+      </div>
+      <div class="stat-card limited-stat">
+        <div class="stat-value" id="stat-limited">—</div>
+        <div class="stat-label">Limited</div>
+      </div>
+      <div class="stat-card banned-stat">
+        <div class="stat-value" id="stat-banned">—</div>
+        <div class="stat-label">Banned</div>
+      </div>
+      <div class="stat-card expired-stat">
+        <div class="stat-value" id="stat-expired">—</div>
+        <div class="stat-label">Expired</div>
+      </div>
+    </div>
+
+    <!-- Sessions Panel -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-header-left">
+          <h3>📁 Registered Sessions &amp; Worker Pool</h3>
+          <p>All <code>.session</code> files in the <code>sessions/</code> directory</p>
+        </div>
+        <div class="panel-header-right">
+          <button id="btn-verify" class="btn btn-sm btn-outline" style="width:auto;" title="Verify real-time session connections with Telegram">⚡ Sync &amp; Check</button>
+          <button id="btn-refresh" class="btn btn-sm btn-primary" style="width:auto;">🔄 Refresh</button>
+        </div>
+      </div>
+      <div class="table-scroll">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Name / Label</th>
+              <th>Phone</th>
+              <th>Session File</th>
+              <th>2FA Pass</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sessions-tbody">
+            <tr><td colspan="7" class="table-empty"><span class="empty-icon">⏳</span>Loading sessions…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div><!-- /admin-content -->
+</div><!-- /admin-wrap -->
+
+<script src="/static/manage.js?v=2.0"></script>
+</body>
+</html>

