@@ -10,6 +10,7 @@ import sys
 import re
 import json
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import date
 from typing import Dict, Any, Optional
 
@@ -50,7 +51,73 @@ API_ID = int(API_ID_RAW) if API_ID_RAW.isdigit() else 0
 API_HASH = os.getenv("API_HASH", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-app = FastAPI(title="Telegram Session Admin Portal")
+# ─────────────────────────────────────────────────────────────────────────────
+#  Keep-Alive Background Task
+#  Pings every registered session every 6 hours to prevent Telegram from
+#  revoking idle sessions due to inactivity.
+# ─────────────────────────────────────────────────────────────────────────────
+
+KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60  # 6 hours
+
+
+async def keepalive_all_sessions():
+    """Ping each session with a lightweight get_me() to prevent Telegram from expiring it."""
+    api_id, api_hash = get_credentials()
+    accounts = load_accounts()
+    if not accounts:
+        return
+
+    print(f"[KeepAlive] Pinging {len(accounts)} session(s) to prevent expiry...")
+    for acc in accounts:
+        stem = acc.get("session_file")
+        if not stem:
+            continue
+        sess_path = os.path.join(SESSIONS_DIR, stem)
+        if not os.path.exists(f"{sess_path}.session"):
+            continue
+        try:
+            client = TelegramClient(sess_path, api_id, api_hash)
+            await client.connect()
+            if await client.is_user_authorized():
+                await client.get_me()  # lightweight ping
+                print(f"[KeepAlive] ✅  {stem}.session — alive")
+                if acc.get("status") == "expired":
+                    acc["status"] = "active"
+            else:
+                print(f"[KeepAlive] ❌  {stem}.session — NOT authorized (expired)")
+                acc["status"] = "expired"
+            await client.disconnect()
+        except Exception as e:
+            print(f"[KeepAlive] ⚠️  {stem}.session — error: {e}")
+
+    save_accounts(accounts)
+
+
+async def keepalive_loop():
+    """Infinite loop that calls keepalive_all_sessions on startup and every 6 hours."""
+    await asyncio.sleep(30)  # small delay after startup before first ping
+    while True:
+        try:
+            await keepalive_all_sessions()
+        except Exception as e:
+            print(f"[KeepAlive] Loop error: {e}")
+        await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
+
+
+@asynccontextmanager
+async def lifespan(app_instance):
+    task = asyncio.create_task(keepalive_loop())
+    print("[KeepAlive] Background keep-alive task started (interval: 6 hours).")
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    print("[KeepAlive] Background keep-alive task stopped.")
+
+
+app = FastAPI(title="Telegram Session Admin Portal", lifespan=lifespan)
 
 @app.middleware("http")
 async def add_no_cache_header(request: Request, call_next):
@@ -173,9 +240,11 @@ def sync_sessions_with_accounts() -> tuple[list[str], list[dict]]:
                     })
                     existing_stems.add(stem)
 
-    valid_accounts = [a for a in accounts if a.get("session_file") in files]
-    save_accounts(valid_accounts)
-    return files, valid_accounts
+    # Only save accounts that are newly registered — do NOT delete existing accounts
+    # just because their session file isn't detected right now. This prevents accounts
+    # from silently disappearing on every page refresh.
+    save_accounts(accounts)
+    return files, accounts
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -578,6 +647,22 @@ async def change_2fa_admin(sess_stem: str, payload: dict = Body(...), authorizat
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to change 2FA password: {str(e)}")
+
+
+@app.post("/api/admin/keepalive")
+async def manual_keepalive(authorization: Optional[str] = Header(None)):
+    """Protected API: Manually trigger a keep-alive ping on all sessions to prevent Telegram from expiring them."""
+    verify_admin_auth(authorization)
+    try:
+        await keepalive_all_sessions()
+        accounts = load_accounts()
+        return JSONResponse({
+            "success": True,
+            "message": f"Keep-alive ping sent to {len(accounts)} session(s).",
+            "accounts": accounts
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Keep-alive failed: {str(e)}")
 
 
 PENDING_SESSIONS_DIR = os.path.join(SESSIONS_DIR, "pending")

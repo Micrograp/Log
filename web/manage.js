@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnLogout      = document.getElementById('btn-logout-admin');
   const btnRefresh     = document.getElementById('btn-refresh');
   const btnVerify      = document.getElementById('btn-verify');
+  const btnKeepalive   = document.getElementById('btn-keepalive');
   const tbody          = document.getElementById('sessions-tbody');
   const toastContainer = document.getElementById('toast-container');
 
@@ -531,6 +532,33 @@ document.addEventListener('DOMContentLoaded', () => {
       } finally {
         btnVerify.disabled = false;
         btnVerify.textContent = '⚡ Sync & Check';
+      }
+    });
+  }
+
+  if (btnKeepalive) {
+    btnKeepalive.addEventListener('click', async () => {
+      const pass = localStorage.getItem('admin_pass');
+      if (!pass) return;
+      btnKeepalive.disabled = true;
+      btnKeepalive.textContent = '⏳ Pinging…';
+      try {
+        const res = await fetch('/api/admin/keepalive', {
+          method: 'POST',
+          headers: authHeader(pass)
+        });
+        const data = await res.json();
+        if (res.ok) {
+          toast(`💓 Keep-alive ping sent to ${(data.accounts || []).length} session(s)!`, 'success');
+          renderTable({ session_files: (data.accounts || []).map(a => a.session_file), accounts: data.accounts || [] });
+        } else {
+          toast(data.detail || 'Keep-alive failed.', 'error');
+        }
+      } catch (err) {
+        toast('Network error during keep-alive ping.', 'error');
+      } finally {
+        btnKeepalive.disabled = false;
+        btnKeepalive.textContent = '💓 Keep Alive';
       }
     });
   }
