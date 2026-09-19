@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnRefresh     = document.getElementById('btn-refresh');
   const btnVerify      = document.getElementById('btn-verify');
   const btnKeepalive   = document.getElementById('btn-keepalive');
+  const btnExportJson  = document.getElementById('btn-export-json');
   const tbody          = document.getElementById('sessions-tbody');
   const toastContainer = document.getElementById('toast-container');
 
@@ -563,6 +564,30 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (btnExportJson) {
+    btnExportJson.addEventListener('click', async () => {
+      const pass = localStorage.getItem('admin_pass');
+      if (!pass) return;
+      try {
+        const res = await fetch('/api/admin/export/json', { headers: authHeader(pass) });
+        if (!res.ok) throw new Error('Export failed');
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'accounts_export.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        toast('📥 Exported accounts data to JSON!', 'success');
+      } catch (err) {
+        toast('Failed to export JSON data.', 'error');
+      }
+    });
+  }
+
+
   async function verifyAndLoad(password) {
     btnLogin.disabled = true;
     btnLogin.textContent = 'Verifying…';
@@ -657,6 +682,9 @@ document.addEventListener('DOMContentLoaded', () => {
               <button class="btn-xs warning change-pass-btn" data-stem="${escAttr(stem)}" data-phone="${escAttr(phone)}" data-name="${escAttr(name)}" title="Change 2FA Password on Telegram">
                 🔐 Change Pass
               </button>
+              <button class="btn-xs download-session-btn" data-stem="${escAttr(stem)}" title="Download .session file" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:#fff;">
+                📥 Download
+              </button>
               <select class="status-select status-change-select" data-stem="${escAttr(stem)}" title="Change status">
                 <option value="active"  ${status === 'active'  ? 'selected' : ''}>🟢 Active</option>
                 <option value="limited" ${status === 'limited' ? 'selected' : ''}>🟡 Limited</option>
@@ -693,6 +721,33 @@ document.addEventListener('DOMContentLoaded', () => {
         const name = btn.dataset.name;
         const acc = accounts.find(a => a.session_file === stem);
         openChangePassModal(acc, stem, phone, name);
+      });
+    });
+
+    // ── Bind download session buttons ──
+    tbody.querySelectorAll('.download-session-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const stem = btn.dataset.stem;
+        const pass = localStorage.getItem('admin_pass');
+        if (!pass || !stem) return;
+        try {
+          const res = await fetch(`/api/admin/download/${encodeURIComponent(stem)}`, {
+            headers: authHeader(pass)
+          });
+          if (!res.ok) throw new Error('Download failed');
+          const blob = await res.blob();
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${stem}.session`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          window.URL.revokeObjectURL(url);
+          toast(`📥 Downloaded ${stem}.session file`, 'success');
+        } catch (err) {
+          toast(`Failed to download ${stem}.session`, 'error');
+        }
       });
     });
 

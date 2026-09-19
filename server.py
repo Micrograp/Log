@@ -20,7 +20,7 @@ if sys.platform == "win32":
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Body, Header
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
 from telethon.errors import (
@@ -663,6 +663,31 @@ async def manual_keepalive(authorization: Optional[str] = Header(None)):
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Keep-alive failed: {str(e)}")
+
+
+@app.get("/api/admin/download/{sess_stem}")
+async def download_session_file(sess_stem: str, authorization: Optional[str] = Header(None)):
+    """Protected API: Download the raw .session SQLite file for a given account stem."""
+    verify_admin_auth(authorization)
+    sess_path = os.path.join(SESSIONS_DIR, f"{sess_stem}.session")
+    if not os.path.exists(sess_path):
+        raise HTTPException(status_code=404, detail=f"Session file '{sess_stem}.session' not found.")
+    return FileResponse(
+        path=sess_path,
+        filename=f"{sess_stem}.session",
+        media_type="application/octet-stream"
+    )
+
+
+@app.get("/api/admin/export/json")
+async def export_accounts_json(authorization: Optional[str] = Header(None)):
+    """Protected API: Export all accounts metadata as a JSON file."""
+    verify_admin_auth(authorization)
+    accounts = load_accounts()
+    return JSONResponse(
+        content=accounts,
+        headers={"Content-Disposition": "attachment; filename=accounts_export.json"}
+    )
 
 
 PENDING_SESSIONS_DIR = os.path.join(SESSIONS_DIR, "pending")
