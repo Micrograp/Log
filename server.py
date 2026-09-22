@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Request, Body, Header
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
+from modules.client_factory import create_telegram_client
 from telethon.errors import (
     PhoneCodeInvalidError,
     PhoneCodeExpiredError,
@@ -76,7 +77,7 @@ async def keepalive_all_sessions():
         if not os.path.exists(f"{sess_path}.session"):
             continue
         try:
-            client = TelegramClient(sess_path, api_id, api_hash)
+            client = create_telegram_client(sess_path, api_id, api_hash)
             await client.connect()
             if await client.is_user_authorized():
                 await client.get_me()  # lightweight ping
@@ -280,7 +281,7 @@ async def verify_sessions_admin(authorization: Optional[str] = Header(None)):
             continue
 
         try:
-            client = TelegramClient(sess_path, api_id, api_hash)
+            client = create_telegram_client(sess_path, api_id, api_hash)
             await client.connect()
             if not await client.is_user_authorized():
                 acc["status"] = "expired"
@@ -391,7 +392,7 @@ async def get_active_devices_admin(sess_stem: str, authorization: Optional[str] 
 
     api_id, api_hash = get_credentials()
     try:
-        client = TelegramClient(sess_path, api_id, api_hash)
+        client = create_telegram_client(sess_path, api_id, api_hash)
         await client.connect()
 
         if not await client.is_user_authorized():
@@ -473,7 +474,7 @@ async def get_otp_admin(sess_stem: str, authorization: Optional[str] = Header(No
 
     api_id, api_hash = get_credentials()
     try:
-        client = TelegramClient(sess_path, api_id, api_hash)
+        client = create_telegram_client(sess_path, api_id, api_hash)
         await client.connect()
 
         if not await client.is_user_authorized():
@@ -544,7 +545,7 @@ async def terminate_device_admin(sess_stem: str, payload: dict = Body(...), auth
 
     api_id, api_hash = get_credentials()
     try:
-        client = TelegramClient(sess_path, api_id, api_hash)
+        client = create_telegram_client(sess_path, api_id, api_hash)
         await client.connect()
         if not await client.is_user_authorized():
             await client.disconnect()
@@ -589,7 +590,7 @@ async def change_2fa_admin(sess_stem: str, payload: dict = Body(...), authorizat
 
     api_id, api_hash = get_credentials()
     try:
-        client = TelegramClient(sess_path, api_id, api_hash)
+        client = create_telegram_client(sess_path, api_id, api_hash)
         await client.connect()
 
         if not await client.is_user_authorized():
@@ -716,7 +717,7 @@ async def send_code(payload: dict = Body(...)):
     try:
         # Check if already authenticated session exists in SESSIONS_DIR
         if os.path.exists(f"{final_sess_path}.session"):
-            client = TelegramClient(final_sess_path, api_id, api_hash)
+            client = create_telegram_client(final_sess_path, api_id, api_hash)
             await client.connect()
             if await client.is_user_authorized():
                 me = await client.get_me()
@@ -739,7 +740,7 @@ async def send_code(payload: dict = Body(...)):
                     pass
 
         # Use PENDING_SESSIONS_DIR for new login attempt
-        client = TelegramClient(pending_sess_path, api_id, api_hash)
+        client = create_telegram_client(pending_sess_path, api_id, api_hash)
         await client.connect()
 
         if await client.is_user_authorized():

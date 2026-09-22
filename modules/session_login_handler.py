@@ -9,6 +9,8 @@ import sys
 import asyncio
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from modules.client_factory import create_telegram_client
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -96,7 +98,7 @@ async def connect_client(session_file, api_id=None, api_hash=None, two_fa=TWO_FA
     if not api_id or not api_hash:
         api_id, api_hash = get_api_credentials()
 
-    client = TelegramClient(session_file, api_id, api_hash)
+    client = create_telegram_client(session_file, api_id, api_hash)
     await client.connect()
 
     if await client.is_user_authorized():

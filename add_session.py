@@ -17,6 +17,7 @@ if sys.platform == "win32":
 
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from modules.client_factory import create_telegram_client
 from telethon.errors import (
     PhoneCodeInvalidError,
     PhoneCodeExpiredError,
@@ -167,7 +168,7 @@ async def login_single_account(api_id: int, api_hash: str, two_fa_default: str =
     sess_path = os.path.join(SESSIONS_DIR, sess_stem)
 
     print(f"\n  🔌 Connecting to Telegram for {clean_phone}...")
-    client = TelegramClient(sess_path, api_id, api_hash)
+    client = create_telegram_client(sess_path, api_id, api_hash)
 
     try:
         await client.connect()

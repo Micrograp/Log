@@ -14,6 +14,7 @@ from datetime import date, datetime
 
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from modules.client_factory import create_telegram_client
 from telethon.errors import (
     SessionPasswordNeededError,
     PasswordHashInvalidError,
@@ -201,7 +202,7 @@ async def add_account_interactive(api_id: int, api_hash: str, two_fa):
 
     print(f"\n  🔐  Connecting to Telegram: {clean_phone} ...")
     try:
-        c = TelegramClient(sess_path, api_id, api_hash)
+        c = create_telegram_client(sess_path, api_id, api_hash)
         await c.connect()
 
         if not await c.is_user_authorized():
@@ -386,7 +387,7 @@ async def control_session_interactive(api_id: int, api_hash: str, two_fa: str = 
 
         if ch == "1":
             print(f"\n  🔍 Fetching profile details for '{stem}.session'...")
-            c = TelegramClient(sess_path, api_id, api_hash)
+            c = create_telegram_client(sess_path, api_id, api_hash)
             try:
                 await c.connect()
                 if not await c.is_user_authorized():
@@ -411,7 +412,7 @@ async def control_session_interactive(api_id: int, api_hash: str, two_fa: str = 
 
         elif ch == "2":
             print(f"\n  🏥 Pinging session: {stem}...")
-            c = TelegramClient(sess_path, api_id, api_hash)
+            c = create_telegram_client(sess_path, api_id, api_hash)
             try:
                 await c.connect()
                 if await c.is_user_authorized():
@@ -427,7 +428,7 @@ async def control_session_interactive(api_id: int, api_hash: str, two_fa: str = 
         elif ch == "3":
             confirm = prompt(f"  ⚠️ LOG OUT '{stem}.session' from Telegram servers? (y/N): ").strip().lower()
             if confirm == "y":
-                c = TelegramClient(sess_path, api_id, api_hash)
+                c = create_telegram_client(sess_path, api_id, api_hash)
                 try:
                     await c.connect()
                     if await c.is_user_authorized():
@@ -516,7 +517,7 @@ async def check_health_all(api_id: int, api_hash: str):
         sys.stdout.write(f"  [{acc['id']:>2}] {label:<16} ... ")
         sys.stdout.flush()
         try:
-            c = TelegramClient(sess_path, api_id, api_hash)
+            c = create_telegram_client(sess_path, api_id, api_hash)
             await c.connect()
             if await c.is_user_authorized():
                 me  = await c.get_me()
@@ -551,7 +552,7 @@ async def clean_invalid_sessions(api_id: int, api_hash: str):
     for stem in stems:
         sess_path = os.path.join(SESSIONS_DIR, stem)
         try:
-            c = TelegramClient(sess_path, api_id, api_hash)
+            c = create_telegram_client(sess_path, api_id, api_hash)
             await c.connect()
             auth = await c.is_user_authorized()
             await c.disconnect()

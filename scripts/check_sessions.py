@@ -10,7 +10,9 @@ if sys.platform == "win32":
 
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from modules.client_factory import create_telegram_client
 from telethon.tl.functions.users import GetFullUserRequest
+
 
 BASE_DIR     = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
@@ -39,7 +41,7 @@ async def check_session(fname: str) -> dict:
     }
 
     try:
-        c = TelegramClient(path, API_ID, API_HASH)
+        c = create_telegram_client(path, API_ID, API_HASH)
         await c.connect()
 
         if not await c.is_user_authorized():

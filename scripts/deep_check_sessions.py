@@ -11,6 +11,8 @@ if sys.platform == "win32":
 
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from modules.client_factory import create_telegram_client
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV_FILE = os.path.join(BASE_DIR, ".env")
@@ -25,7 +27,7 @@ SESSIONS_DIR = os.path.join(BASE_DIR, "sessions")
 
 async def check_session_deep(session_path):
     s_name = os.path.basename(session_path).replace(".session", "")
-    client = TelegramClient(session_path, API_ID, API_HASH)
+    client = create_telegram_client(session_path, API_ID, API_HASH)
 
     result = {
         "session": s_name,
