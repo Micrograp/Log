@@ -23,7 +23,9 @@ from fastapi import FastAPI, HTTPException, Request, Body, Header
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 from modules.client_factory import create_telegram_client
+
 from telethon.errors import (
     PhoneCodeInvalidError,
     PhoneCodeExpiredError,
@@ -58,7 +60,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 #  revoking idle sessions due to inactivity.
 # ─────────────────────────────────────────────────────────────────────────────
 
-KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60  # 6 hours
+KEEPALIVE_INTERVAL_SECONDS = 12 * 60 * 60  # 12 hours
 
 # Per-session asyncio locks to prevent SQLite database lock collisions
 SESSION_LOCKS: Dict[str, asyncio.Lock] = {}
@@ -68,6 +70,38 @@ def get_session_lock(stem: str) -> asyncio.Lock:
         SESSION_LOCKS[stem] = asyncio.Lock()
     return SESSION_LOCKS[stem]
 
+
+def restore_session_files_from_db():
+    """
+    On server startup or request, checks if any registered accounts in accounts.json have a saved session_string
+    but their .session file is missing from SESSIONS_DIR (e.g. after Render container restart).
+    Restores the .session file automatically on disk from the stored StringSession token.
+    """
+    api_id, api_hash = get_credentials()
+    if api_id <= 0 or not api_hash:
+        return
+
+    accounts = load_accounts()
+    for acc in accounts:
+        stem = acc.get("session_file")
+        sess_str = acc.get("session_string")
+        if not stem or not sess_str:
+            continue
+
+        sess_path = os.path.join(SESSIONS_DIR, stem)
+        if not os.path.exists(f"{sess_path}.session"):
+            print(f"[Restore] Re-creating missing .session file on disk for Worker '{stem}' from stored StringSession...")
+            try:
+                str_sess = StringSession(sess_str)
+                file_client = TelegramClient(sess_path, api_id, api_hash)
+                file_client.session.auth_key = str_sess.auth_key
+                file_client.session.server_address = str_sess.server_address
+                file_client.session.port = str_sess.port
+                file_client.session.dc_id = str_sess.dc_id
+                file_client.session.save()
+                print(f"[Restore] ✅ Successfully restored {stem}.session")
+            except Exception as e:
+                print(f"[Restore] ⚠️ Could not restore {stem}.session: {e}")
 
 
 async def keepalive_all_sessions():
@@ -111,22 +145,21 @@ async def keepalive_all_sessions():
     save_accounts(accounts)
 
 
-
 async def keepalive_loop():
-    """Infinite loop that calls keepalive_all_sessions on startup and every 6 hours."""
-    await asyncio.sleep(30)  # small delay after startup before first ping
+    """Infinite loop that calls keepalive_all_sessions passively every 12 hours."""
     while True:
+        await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
         try:
             await keepalive_all_sessions()
         except Exception as e:
             print(f"[KeepAlive] Loop error: {e}")
-        await asyncio.sleep(KEEPALIVE_INTERVAL_SECONDS)
 
 
 @asynccontextmanager
 async def lifespan(app_instance):
+    restore_session_files_from_db()
     task = asyncio.create_task(keepalive_loop())
-    print("[KeepAlive] Background keep-alive task started (interval: 6 hours).")
+    print("[KeepAlive] Background keep-alive task started (interval: 12 hours).")
     yield
     task.cancel()
     try:
@@ -190,7 +223,7 @@ def save_accounts(accounts: list[dict]):
         json.dump(accounts, f, ensure_ascii=False, indent=2)
 
 
-def register_account_in_db(sess_stem: str, phone: str, display: str, password: str = ""):
+def register_account_in_db(sess_stem: str, phone: str, display: str, password: str = "", session_string: str = ""):
     accounts = load_accounts()
     existing_acc = next((a for a in accounts if a.get("session_file") == sess_stem), None)
     next_id = existing_acc.get("id") if existing_acc else (max((a.get("id", 0) for a in accounts), default=0) + 1)
@@ -199,6 +232,7 @@ def register_account_in_db(sess_stem: str, phone: str, display: str, password: s
     current_pass = password if password else (existing_acc.get("password", "") if existing_acc else "")
     prev_passwords = existing_acc.get("previous_passwords", []) if existing_acc else []
     prev_pass = existing_acc.get("previous_password", "") if existing_acc else ""
+    sess_str = session_string if session_string else (existing_acc.get("session_string", "") if existing_acc else "")
 
     accounts = [a for a in accounts if a.get("session_file") != sess_stem]
 
@@ -207,6 +241,7 @@ def register_account_in_db(sess_stem: str, phone: str, display: str, password: s
         "label": label,
         "phone": phone,
         "session_file": sess_stem,
+        "session_string": sess_str,
         "display_name": display,
         "status": existing_acc.get("status", "active") if existing_acc else "active",
         "daily_adds": existing_acc.get("daily_adds", 0) if existing_acc else 0,
@@ -224,6 +259,7 @@ def register_account_in_db(sess_stem: str, phone: str, display: str, password: s
     }
     accounts.append(new_acc)
     save_accounts(accounts)
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -274,12 +310,14 @@ def sync_sessions_with_accounts() -> tuple[list[str], list[dict]]:
 async def list_sessions_admin(authorization: Optional[str] = Header(None)):
     """Protected API: List all saved session files and worker accounts (Requires Admin Password)."""
     verify_admin_auth(authorization)
+    restore_session_files_from_db()
     files, accounts = sync_sessions_with_accounts()
     return JSONResponse({
         "session_files": files,
         "accounts": accounts,
         "total": len(files)
     })
+
 
 
 @app.post("/api/admin/verify-sessions")
@@ -880,6 +918,12 @@ async def verify_code(payload: dict = Body(...)):
             display = f"{me.first_name or ''} {me.last_name or ''}".strip()
             user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
 
+            sess_str = ""
+            try:
+                sess_str = client.session.save()
+            except Exception:
+                pass
+
             try:
                 await client.disconnect()
             except Exception:
@@ -893,7 +937,7 @@ async def verify_code(payload: dict = Body(...)):
             if os.path.exists(f"{pending_sess_path}.session-journal"):
                 os.replace(f"{pending_sess_path}.session-journal", f"{final_sess_path}.session-journal")
 
-            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})")
+            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})", session_string=sess_str)
 
             return JSONResponse({
                 "success": True,
@@ -949,6 +993,12 @@ async def verify_2fa(payload: dict = Body(...)):
             display = f"{me.first_name or ''} {me.last_name or ''}".strip()
             user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
 
+            sess_str = ""
+            try:
+                sess_str = client.session.save()
+            except Exception:
+                pass
+
             try:
                 await client.disconnect()
             except Exception:
@@ -962,7 +1012,7 @@ async def verify_2fa(payload: dict = Body(...)):
             if os.path.exists(f"{pending_sess_path}.session-journal"):
                 os.replace(f"{pending_sess_path}.session-journal", f"{final_sess_path}.session-journal")
 
-            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})", password=password)
+            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})", password=password, session_string=sess_str)
 
             return JSONResponse({
                 "success": True,
@@ -980,6 +1030,7 @@ async def verify_2fa(payload: dict = Body(...)):
             if clean_phone in pending_logins:
                 del pending_logins[clean_phone]
             raise HTTPException(status_code=500, detail=str(e))
+
 
 
 

@@ -1,5 +1,6 @@
 import os
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 
 try:
     import socks
@@ -48,7 +49,8 @@ def get_proxy_config():
 def create_telegram_client(session_target, api_id=None, api_hash=None, **kwargs):
     """
     Creates a Telethon TelegramClient instance configured with realistic desktop device headers
-    and optional proxy settings to prevent session revocations when hosted on cloud platforms (e.g., Render).
+    and optional proxy settings.
+    If session_target is a StringSession string (e.g., starts with '1' and long), wraps it in StringSession.
     """
     if not api_id:
         api_id_val = os.getenv("API_ID", "").strip()
@@ -57,7 +59,11 @@ def create_telegram_client(session_target, api_id=None, api_hash=None, **kwargs)
     if not api_hash:
         api_hash = os.getenv("API_HASH", "").strip()
 
-    # Step 3: Realistic device properties
+    # Handle StringSession target if string token passed directly
+    if isinstance(session_target, str) and len(session_target) > 50 and not os.path.exists(session_target) and not session_target.endswith(".session"):
+        session_target = StringSession(session_target)
+
+    # Realistic device properties
     device_defaults = {
         "device_model": os.getenv("TELEGRAM_DEVICE_MODEL", "Desktop"),
         "system_version": os.getenv("TELEGRAM_SYSTEM_VERSION", "Windows 11 x64"),
@@ -70,7 +76,7 @@ def create_telegram_client(session_target, api_id=None, api_hash=None, **kwargs)
         if key not in kwargs:
             kwargs[key] = val
 
-    # Step 4: Proxy configuration
+    # Proxy configuration
     if "proxy" not in kwargs:
         proxy_config = get_proxy_config()
         if proxy_config:
