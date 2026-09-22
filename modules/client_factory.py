@@ -1,6 +1,12 @@
 import os
-import socks
 from telethon import TelegramClient
+
+try:
+    import socks
+    HAS_SOCKS = True
+except ImportError:
+    socks = None
+    HAS_SOCKS = False
 
 def get_proxy_config():
     """
@@ -13,6 +19,9 @@ def get_proxy_config():
       PROXY_USER=username (optional)
       PROXY_PASS=password (optional)
     """
+    if not HAS_SOCKS:
+        return None
+
     proxy_host = os.getenv("PROXY_HOST", "").strip()
     proxy_port = os.getenv("PROXY_PORT", "").strip()
     if not proxy_host or not proxy_port:
@@ -25,11 +34,11 @@ def get_proxy_config():
 
     proxy_type_str = os.getenv("PROXY_TYPE", "SOCKS5").strip().upper()
     type_map = {
-        "SOCKS5": socks.SOCKS5,
-        "SOCKS4": socks.SOCKS4,
-        "HTTP": socks.HTTP,
+        "SOCKS5": getattr(socks, "SOCKS5", 2),
+        "SOCKS4": getattr(socks, "SOCKS4", 1),
+        "HTTP": getattr(socks, "HTTP", 3),
     }
-    proxy_type = type_map.get(proxy_type_str, socks.SOCKS5)
+    proxy_type = type_map.get(proxy_type_str, getattr(socks, "SOCKS5", 2))
 
     user = os.getenv("PROXY_USER", "").strip() or None
     password = os.getenv("PROXY_PASS", "").strip() or None
