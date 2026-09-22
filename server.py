@@ -93,18 +93,13 @@ def restore_session_files_from_db():
             print(f"[Restore] Re-creating missing .session file on disk for Worker '{stem}' from stored StringSession...")
             try:
                 str_sess = StringSession(sess_str)
-                if getattr(str_sess, "auth_key", None):
-                    file_client = TelegramClient(sess_path, api_id, api_hash)
-                    file_client.session.auth_key = str_sess.auth_key
-                    file_client.session.server_address = str_sess.server_address
-                    file_client.session.port = str_sess.port
-                    file_client.session.dc_id = str_sess.dc_id
-                    file_client.session.save()
-                    try:
-                        file_client.disconnect()
-                    except Exception:
-                        pass
-                    print(f"[Restore] ✅ Successfully restored {stem}.session")
+                file_client = TelegramClient(sess_path, api_id, api_hash)
+                file_client.session.auth_key = str_sess.auth_key
+                file_client.session.server_address = str_sess.server_address
+                file_client.session.port = str_sess.port
+                file_client.session.dc_id = str_sess.dc_id
+                file_client.session.save()
+                print(f"[Restore] ✅ Successfully restored {stem}.session")
             except Exception as e:
                 print(f"[Restore] ⚠️ Could not restore {stem}.session: {e}")
 
@@ -176,14 +171,6 @@ async def lifespan(app_instance):
 
 app = FastAPI(title="Telegram Session Admin Portal", lifespan=lifespan)
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    print(f"[ServerError] Unhandled Exception on {request.url.path}: {exc}")
-    return JSONResponse(
-        status_code=500,
-        content={"detail": str(exc) or "Internal Server Error"}
-    )
-
 @app.middleware("http")
 async def add_no_cache_header(request: Request, call_next):
     response = await call_next(request)
@@ -191,7 +178,6 @@ async def add_no_cache_header(request: Request, call_next):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
-
 
 # In-memory session tracking for active login attempts
 pending_logins: Dict[str, Dict[str, Any]] = {}

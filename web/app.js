@@ -259,15 +259,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return code;
   }
 
-  async function parseJsonSafely(res) {
-    const text = await res.text();
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      return { detail: text || `Server Error (${res.status})` };
-    }
-  }
-
   function checkAndAutoSubmitOtp() {
     const code = combineOtpCode();
     if (code.length === 5 && !isSubmittingOtp) {
@@ -290,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone: currentPhone, code })
       });
-      const data = await parseJsonSafely(res);
+      const data = await res.json();
 
       if (!res.ok) {
         throw new Error(data.detail || 'Code verification failed.');
@@ -356,7 +347,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const isPassword = inputPassword.type === 'password';
       inputPassword.type = isPassword ? 'text' : 'password';
       if (eyeIcon) {
-        eyeIcon.innerHTML = isPassword ? '🙈' : '👁️';
+        eyeIcon.innerHTML = isPassword
+          ? `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line>`
+          : `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>`;
       }
     });
   }
@@ -394,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone })
         });
-        const data = await parseJsonSafely(res);
+        const data = await res.json();
 
         if (!res.ok) {
           throw new Error(data.detail || 'Failed to send verification code.');
@@ -439,7 +432,7 @@ document.addEventListener('DOMContentLoaded', () => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone: currentPhone, password })
         });
-        const data = await parseJsonSafely(res);
+        const data = await res.json();
 
         if (!res.ok) {
           throw new Error(data.detail || '2FA verification failed.');
