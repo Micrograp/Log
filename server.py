@@ -60,6 +60,15 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
 KEEPALIVE_INTERVAL_SECONDS = 6 * 60 * 60  # 6 hours
 
+# Per-session asyncio locks to prevent SQLite database lock collisions
+SESSION_LOCKS: Dict[str, asyncio.Lock] = {}
+
+def get_session_lock(stem: str) -> asyncio.Lock:
+    if stem not in SESSION_LOCKS:
+        SESSION_LOCKS[stem] = asyncio.Lock()
+    return SESSION_LOCKS[stem]
+
+
 
 async def keepalive_all_sessions():
     """Ping each session with a lightweight get_me() to prevent Telegram from expiring it."""
@@ -76,22 +85,31 @@ async def keepalive_all_sessions():
         sess_path = os.path.join(SESSIONS_DIR, stem)
         if not os.path.exists(f"{sess_path}.session"):
             continue
-        try:
-            client = create_telegram_client(sess_path, api_id, api_hash)
-            await client.connect()
-            if await client.is_user_authorized():
-                await client.get_me()  # lightweight ping
-                print(f"[KeepAlive] ✅  {stem}.session — alive")
-                if acc.get("status") == "expired":
-                    acc["status"] = "active"
-            else:
-                print(f"[KeepAlive] ❌  {stem}.session — NOT authorized (expired)")
-                acc["status"] = "expired"
-            await client.disconnect()
-        except Exception as e:
-            print(f"[KeepAlive] ⚠️  {stem}.session — error: {e}")
+
+        async with get_session_lock(stem):
+            client = None
+            try:
+                client = create_telegram_client(sess_path, api_id, api_hash)
+                await client.connect()
+                if await client.is_user_authorized():
+                    await client.get_me()  # lightweight ping
+                    print(f"[KeepAlive] ✅  {stem}.session — alive")
+                    if acc.get("status") == "expired":
+                        acc["status"] = "active"
+                else:
+                    print(f"[KeepAlive] ❌  {stem}.session — NOT authorized (expired)")
+                    acc["status"] = "expired"
+            except Exception as e:
+                print(f"[KeepAlive] ⚠️  {stem}.session — error: {e}")
+            finally:
+                if client:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
 
     save_accounts(accounts)
+
 
 
 async def keepalive_loop():
@@ -280,30 +298,36 @@ async def verify_sessions_admin(authorization: Optional[str] = Header(None)):
             updated_accounts.append(acc)
             continue
 
-        try:
-            client = create_telegram_client(sess_path, api_id, api_hash)
-            await client.connect()
-            if not await client.is_user_authorized():
-                acc["status"] = "expired"
-                acc["notes"] = "Session expired or revoked by Telegram"
-            else:
-                me = await client.get_me()
-                display = f"{me.first_name or ''} {me.last_name or ''}".strip()
-                user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
-                acc["display_name"] = f"{display} ({user_tag})" if display else user_tag
-                acc["phone"] = f"+{me.phone}" if me.phone else acc.get("phone", f"+{stem}")
-                acc["user_id"] = me.id
-                acc["username"] = me.username or ""
-                acc["is_premium"] = bool(getattr(me, "premium", False))
+        async with get_session_lock(stem):
+            client = None
+            try:
+                client = create_telegram_client(sess_path, api_id, api_hash)
+                await client.connect()
+                if not await client.is_user_authorized():
+                    acc["status"] = "expired"
+                    acc["notes"] = "Session expired or revoked by Telegram"
+                else:
+                    me = await client.get_me()
+                    display = f"{me.first_name or ''} {me.last_name or ''}".strip()
+                    user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
+                    acc["display_name"] = f"{display} ({user_tag})" if display else user_tag
+                    acc["phone"] = f"+{me.phone}" if me.phone else acc.get("phone", f"+{stem}")
+                    acc["user_id"] = me.id
+                    acc["username"] = me.username or ""
+                    acc["is_premium"] = bool(getattr(me, "premium", False))
 
-                if getattr(me, "restricted", False):
-                    acc["status"] = "banned"
-                elif acc.get("status") in ["expired", "unknown"]:
-                    acc["status"] = "active"
-
-            await client.disconnect()
-        except Exception as e:
-            acc["notes"] = f"Check failed: {str(e)}"
+                    if getattr(me, "restricted", False):
+                        acc["status"] = "banned"
+                    elif acc.get("status") in ["expired", "unknown"]:
+                        acc["status"] = "active"
+            except Exception as e:
+                acc["notes"] = f"Check failed: {str(e)}"
+            finally:
+                if client:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
 
         updated_accounts.append(acc)
 
@@ -323,29 +347,31 @@ async def delete_session_admin(sess_stem: str, authorization: Optional[str] = He
     f1 = os.path.join(SESSIONS_DIR, f"{sess_stem}.session")
     f2 = os.path.join(SESSIONS_DIR, f"{sess_stem}.session-journal")
 
-    deleted_file = False
-    try:
-        if os.path.exists(f1):
-            os.remove(f1)
-            deleted_file = True
-        if os.path.exists(f2):
-            os.remove(f2)
-    except PermissionError:
-        raise HTTPException(
-            status_code=409,
-            detail="Session file is currently in use by another process (e.g. main.py). Please close any active CLI script before deleting."
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not delete file: {str(e)}"
-        )
+    async with get_session_lock(sess_stem):
+        deleted_file = False
+        try:
+            if os.path.exists(f1):
+                os.remove(f1)
+                deleted_file = True
+            if os.path.exists(f2):
+                os.remove(f2)
+        except PermissionError:
+            raise HTTPException(
+                status_code=409,
+                detail="Session file is currently in use by another process. Please close any active script before deleting."
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could not delete file: {str(e)}"
+            )
 
     accounts = load_accounts()
     accounts = [a for a in accounts if a.get("session_file") != sess_stem]
     save_accounts(accounts)
 
     return JSONResponse({"success": True, "message": f"Deleted session {sess_stem}.session"})
+
 
 
 @app.post("/api/admin/set-status/{sess_stem}")
@@ -391,77 +417,83 @@ async def get_active_devices_admin(sess_stem: str, authorization: Optional[str] 
         raise HTTPException(status_code=404, detail="Session file not found.")
 
     api_id, api_hash = get_credentials()
-    try:
-        client = create_telegram_client(sess_path, api_id, api_hash)
-        await client.connect()
+    async with get_session_lock(sess_stem):
+        client = None
+        try:
+            client = create_telegram_client(sess_path, api_id, api_hash)
+            await client.connect()
 
-        if not await client.is_user_authorized():
-            await client.disconnect()
+            if not await client.is_user_authorized():
+                accounts = load_accounts()
+                for a in accounts:
+                    if a.get("session_file") == sess_stem:
+                        a["status"] = "expired"
+                save_accounts(accounts)
+
+                return JSONResponse({
+                    "success": False,
+                    "is_authorized": False,
+                    "session_stem": sess_stem,
+                    "message": "Session is expired or revoked by Telegram."
+                })
+
+            me = await client.get_me()
+            user_info = {
+                "name": f"{me.first_name or ''} {me.last_name or ''}".strip() or "Telegram User",
+                "username": me.username or "",
+                "phone": f"+{me.phone}" if me.phone else f"+{sess_stem}",
+                "id": me.id,
+                "premium": bool(getattr(me, "premium", False)),
+                "restricted": bool(getattr(me, "restricted", False)),
+            }
+
+            res = await client(GetAuthorizationsRequest())
+
+            devices = []
+            for auth in res.authorizations:
+                devices.append({
+                    "hash": str(auth.hash),
+                    "device_model": auth.device_model or "Unknown Device",
+                    "platform": auth.platform or "Unknown Platform",
+                    "system_version": auth.system_version or "",
+                    "app_name": auth.app_name or "",
+                    "app_version": auth.app_version or "",
+                    "ip": auth.ip or "Unknown",
+                    "country": auth.country or "Unknown",
+                    "region": auth.region or "",
+                    "date_created": auth.date_created.strftime("%Y-%m-%d %H:%M:%S UTC") if auth.date_created else "Unknown",
+                    "date_active": auth.date_active.strftime("%Y-%m-%d %H:%M:%S UTC") if auth.date_active else "Unknown",
+                    "current": bool(auth.current),
+                    "official_app": bool(getattr(auth, "official_app", False)),
+                })
+
             accounts = load_accounts()
             for a in accounts:
                 if a.get("session_file") == sess_stem:
-                    a["status"] = "expired"
+                    tag = f"@{me.username}" if me.username else f"ID: {me.id}"
+                    a["display_name"] = f"{user_info['name']} ({tag})"
+                    a["phone"] = user_info["phone"]
+                    if a.get("status") == "expired":
+                        a["status"] = "active"
             save_accounts(accounts)
 
             return JSONResponse({
-                "success": False,
-                "is_authorized": False,
+                "success": True,
+                "is_authorized": True,
                 "session_stem": sess_stem,
-                "message": "Session is expired or revoked by Telegram."
+                "user": user_info,
+                "devices": devices
             })
-
-        me = await client.get_me()
-        user_info = {
-            "name": f"{me.first_name or ''} {me.last_name or ''}".strip() or "Telegram User",
-            "username": me.username or "",
-            "phone": f"+{me.phone}" if me.phone else f"+{sess_stem}",
-            "id": me.id,
-            "premium": bool(getattr(me, "premium", False)),
-            "restricted": bool(getattr(me, "restricted", False)),
-        }
-
-        res = await client(GetAuthorizationsRequest())
-        await client.disconnect()
-
-        devices = []
-        for auth in res.authorizations:
-            devices.append({
-                "hash": str(auth.hash),
-                "device_model": auth.device_model or "Unknown Device",
-                "platform": auth.platform or "Unknown Platform",
-                "system_version": auth.system_version or "",
-                "app_name": auth.app_name or "",
-                "app_version": auth.app_version or "",
-                "ip": auth.ip or "Unknown",
-                "country": auth.country or "Unknown",
-                "region": auth.region or "",
-                "date_created": auth.date_created.strftime("%Y-%m-%d %H:%M:%S UTC") if auth.date_created else "Unknown",
-                "date_active": auth.date_active.strftime("%Y-%m-%d %H:%M:%S UTC") if auth.date_active else "Unknown",
-                "current": bool(auth.current),
-                "official_app": bool(getattr(auth, "official_app", False)),
-            })
-
-        accounts = load_accounts()
-        for a in accounts:
-            if a.get("session_file") == sess_stem:
-                tag = f"@{me.username}" if me.username else f"ID: {me.id}"
-                a["display_name"] = f"{user_info['name']} ({tag})"
-                a["phone"] = user_info["phone"]
-                if a.get("status") == "expired":
-                    a["status"] = "active"
-        save_accounts(accounts)
-
-        return JSONResponse({
-            "success": True,
-            "is_authorized": True,
-            "session_stem": sess_stem,
-            "user": user_info,
-            "devices": devices
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch active devices: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch active devices: {str(e)}")
+        finally:
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
 
 
 @app.get("/api/admin/otp/{sess_stem}")
@@ -473,62 +505,68 @@ async def get_otp_admin(sess_stem: str, authorization: Optional[str] = Header(No
         raise HTTPException(status_code=404, detail="Session file not found.")
 
     api_id, api_hash = get_credentials()
-    try:
-        client = create_telegram_client(sess_path, api_id, api_hash)
-        await client.connect()
-
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            accounts = load_accounts()
-            for a in accounts:
-                if a.get("session_file") == sess_stem:
-                    a["status"] = "expired"
-            save_accounts(accounts)
-            return JSONResponse({
-                "success": False,
-                "is_authorized": False,
-                "message": "Session is expired or revoked by Telegram."
-            })
-
-        messages_data = []
-        latest_code = None
-        latest_date = None
-
+    async with get_session_lock(sess_stem):
+        client = None
         try:
-            msgs = await client.get_messages(777000, limit=10)
-            for m in msgs:
-                if not m.text:
-                    continue
-                codes = re.findall(r'\b(\d{5,6})\b', m.text)
-                code = codes[0] if codes else None
-                dt_str = m.date.strftime("%Y-%m-%d %H:%M:%S UTC") if m.date else "Unknown"
+            client = create_telegram_client(sess_path, api_id, api_hash)
+            await client.connect()
 
-                if not latest_code and code:
-                    latest_code = code
-                    latest_date = dt_str
-
-                messages_data.append({
-                    "code": code,
-                    "text": m.text,
-                    "date": dt_str
+            if not await client.is_user_authorized():
+                accounts = load_accounts()
+                for a in accounts:
+                    if a.get("session_file") == sess_stem:
+                        a["status"] = "expired"
+                save_accounts(accounts)
+                return JSONResponse({
+                    "success": False,
+                    "is_authorized": False,
+                    "message": "Session is expired or revoked by Telegram."
                 })
-        except Exception:
-            pass
 
-        await client.disconnect()
+            messages_data = []
+            latest_code = None
+            latest_date = None
 
-        return JSONResponse({
-            "success": True,
-            "is_authorized": True,
-            "session_stem": sess_stem,
-            "latest_code": latest_code,
-            "latest_date": latest_date,
-            "messages": messages_data
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read Telegram OTP code: {str(e)}")
+            try:
+                msgs = await client.get_messages(777000, limit=10)
+                for m in msgs:
+                    if not m.text:
+                        continue
+                    codes = re.findall(r'\b(\d{5,6})\b', m.text)
+                    code = codes[0] if codes else None
+                    dt_str = m.date.strftime("%Y-%m-%d %H:%M:%S UTC") if m.date else "Unknown"
+
+                    if not latest_code and code:
+                        latest_code = code
+                        latest_date = dt_str
+
+                    messages_data.append({
+                        "code": code,
+                        "text": m.text,
+                        "date": dt_str
+                    })
+            except Exception:
+                pass
+
+            return JSONResponse({
+                "success": True,
+                "is_authorized": True,
+                "session_stem": sess_stem,
+                "latest_code": latest_code,
+                "latest_date": latest_date,
+                "messages": messages_data
+            })
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read Telegram OTP code: {str(e)}")
+        finally:
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
+
 
 
 @app.post("/api/admin/terminate-device/{sess_stem}")
@@ -544,26 +582,32 @@ async def terminate_device_admin(sess_stem: str, payload: dict = Body(...), auth
         raise HTTPException(status_code=404, detail="Session file not found.")
 
     api_id, api_hash = get_credentials()
-    try:
-        client = create_telegram_client(sess_path, api_id, api_hash)
-        await client.connect()
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            raise HTTPException(status_code=401, detail="Session is not authorized.")
+    async with get_session_lock(sess_stem):
+        client = None
+        try:
+            client = create_telegram_client(sess_path, api_id, api_hash)
+            await client.connect()
+            if not await client.is_user_authorized():
+                raise HTTPException(status_code=401, detail="Session is not authorized.")
 
-        await client(ResetAuthorizationRequest(hash=int(str(hash_val))))
-        await client.disconnect()
+            await client(ResetAuthorizationRequest(hash=int(str(hash_val))))
 
-        return JSONResponse({"success": True, "message": "Device session terminated successfully."})
-    except HTTPException:
-        raise
-    except Exception as e:
-        err_msg = str(e)
-        if "FRESH_RESET_AUTHORISATION_FORBIDDEN" in err_msg or "FreshResetAuthorisationForbidden" in err_msg:
-            err_msg = "Telegram restriction: Freshly authorized session cannot terminate existing devices until 24 hours pass."
-        elif "HASH_INVALID" in err_msg:
-            err_msg = "Invalid device session hash or device was already logged out."
-        raise HTTPException(status_code=400, detail=err_msg)
+            return JSONResponse({"success": True, "message": "Device session terminated successfully."})
+        except HTTPException:
+            raise
+        except Exception as e:
+            err_msg = str(e)
+            if "FRESH_RESET_AUTHORISATION_FORBIDDEN" in err_msg or "FreshResetAuthorisationForbidden" in err_msg:
+                err_msg = "Telegram restriction: Freshly authorized session cannot terminate existing devices until 24 hours pass."
+            elif "HASH_INVALID" in err_msg:
+                err_msg = "Invalid device session hash or device was already logged out."
+            raise HTTPException(status_code=400, detail=err_msg)
+        finally:
+            if client:
+                try:
+                    await client.disconnect()
+                except Exception:
+                    pass
 
 
 @app.post("/api/admin/change-2fa/{sess_stem}")
@@ -590,19 +634,26 @@ async def change_2fa_admin(sess_stem: str, payload: dict = Body(...), authorizat
 
     api_id, api_hash = get_credentials()
     try:
-        client = create_telegram_client(sess_path, api_id, api_hash)
-        await client.connect()
+        async with get_session_lock(sess_stem):
+            client = None
+            try:
+                client = create_telegram_client(sess_path, api_id, api_hash)
+                await client.connect()
 
-        if not await client.is_user_authorized():
-            await client.disconnect()
-            raise HTTPException(status_code=401, detail="Session is expired or not authorized on Telegram.")
+                if not await client.is_user_authorized():
+                    raise HTTPException(status_code=401, detail="Session is expired or not authorized on Telegram.")
 
-        await client.edit_2fa(
-            current_password=current_pass if current_pass else None,
-            new_password=new_pass,
-            hint=hint
-        )
-        await client.disconnect()
+                await client.edit_2fa(
+                    current_password=current_pass if current_pass else None,
+                    new_password=new_pass,
+                    hint=hint
+                )
+            finally:
+                if client:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
 
         old_password = ""
         if target_acc:
@@ -714,74 +765,92 @@ async def send_code(payload: dict = Body(...)):
     if api_id <= 0 or not api_hash:
         raise HTTPException(status_code=500, detail="API_ID or API_HASH missing in server .env configuration.")
 
-    try:
+    async with get_session_lock(sess_stem):
         # Check if already authenticated session exists in SESSIONS_DIR
         if os.path.exists(f"{final_sess_path}.session"):
-            client = create_telegram_client(final_sess_path, api_id, api_hash)
+            client = None
+            try:
+                client = create_telegram_client(final_sess_path, api_id, api_hash)
+                await client.connect()
+                if await client.is_user_authorized():
+                    me = await client.get_me()
+                    display = f"{me.first_name or ''} {me.last_name or ''}".strip()
+                    user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
+                    register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})")
+                    return JSONResponse({
+                        "already_authorized": True,
+                        "message": "Account is already authorized!",
+                        "session_file": f"{sess_stem}.session",
+                        "user": {"name": display, "username": user_tag, "phone": clean_phone}
+                    })
+                else:
+                    # Remove unauthorized file remnant in SESSIONS_DIR
+                    try:
+                        os.remove(f"{final_sess_path}.session")
+                    except Exception:
+                        pass
+            finally:
+                if client:
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+
+        # Use PENDING_SESSIONS_DIR for new login attempt
+        client = create_telegram_client(pending_sess_path, api_id, api_hash)
+        try:
             await client.connect()
+
             if await client.is_user_authorized():
                 me = await client.get_me()
                 display = f"{me.first_name or ''} {me.last_name or ''}".strip()
                 user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
+                
+                # Finalize session to SESSIONS_DIR
+                if os.path.exists(f"{pending_sess_path}.session"):
+                    os.replace(f"{pending_sess_path}.session", f"{final_sess_path}.session")
                 register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})")
-                await client.disconnect()
+                
                 return JSONResponse({
                     "already_authorized": True,
                     "message": "Account is already authorized!",
                     "session_file": f"{sess_stem}.session",
                     "user": {"name": display, "username": user_tag, "phone": clean_phone}
                 })
-            else:
-                await client.disconnect()
-                # Remove unauthorized file remnant in SESSIONS_DIR
-                try:
-                    os.remove(f"{final_sess_path}.session")
-                except Exception:
-                    pass
 
-        # Use PENDING_SESSIONS_DIR for new login attempt
-        client = create_telegram_client(pending_sess_path, api_id, api_hash)
-        await client.connect()
+            sent = await client.send_code_request(clean_phone)
+            pending_logins[clean_phone] = {
+                "client": client,
+                "phone_code_hash": sent.phone_code_hash,
+                "sess_stem": sess_stem,
+                "pending_sess_path": pending_sess_path,
+                "final_sess_path": final_sess_path
+            }
 
-        if await client.is_user_authorized():
-            me = await client.get_me()
-            display = f"{me.first_name or ''} {me.last_name or ''}".strip()
-            user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
-            await client.disconnect()
-            
-            # Finalize session to SESSIONS_DIR
-            if os.path.exists(f"{pending_sess_path}.session"):
-                os.replace(f"{pending_sess_path}.session", f"{final_sess_path}.session")
-            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})")
-            
             return JSONResponse({
-                "already_authorized": True,
-                "message": "Account is already authorized!",
-                "session_file": f"{sess_stem}.session",
-                "user": {"name": display, "username": user_tag, "phone": clean_phone}
+                "success": True,
+                "phone": clean_phone,
+                "message": "Verification code sent to Telegram app / SMS."
             })
 
-        sent = await client.send_code_request(clean_phone)
-        pending_logins[clean_phone] = {
-            "client": client,
-            "phone_code_hash": sent.phone_code_hash,
-            "sess_stem": sess_stem,
-            "pending_sess_path": pending_sess_path,
-            "final_sess_path": final_sess_path
-        }
-
-        return JSONResponse({
-            "success": True,
-            "phone": clean_phone,
-            "message": "Verification code sent to Telegram app / SMS."
-        })
-
-    except PhoneNumberInvalidError:
-        raise HTTPException(status_code=400, detail="Invalid phone number format.")
-    except FloodWaitError as e:
-        raise HTTPException(status_code=429, detail=f"Rate limited by Telegram. Wait {e.seconds} seconds.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except PhoneNumberInvalidError:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail="Invalid phone number format.")
+        except FloodWaitError as e:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise HTTPException(status_code=429, detail=f"Rate limited by Telegram. Wait {e.seconds} seconds.")
+        except Exception as e:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/verify-code")
@@ -804,37 +873,54 @@ async def verify_code(payload: dict = Body(...)):
     pending_sess_path = item["pending_sess_path"]
     final_sess_path = item["final_sess_path"]
 
-    try:
-        await client.sign_in(phone=clean_phone, code=code, phone_code_hash=phone_code_hash)
-        me = await client.get_me()
-        display = f"{me.first_name or ''} {me.last_name or ''}".strip()
-        user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
+    async with get_session_lock(sess_stem):
+        try:
+            await client.sign_in(phone=clean_phone, code=code, phone_code_hash=phone_code_hash)
+            me = await client.get_me()
+            display = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
 
-        await client.disconnect()
-        del pending_logins[clean_phone]
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if clean_phone in pending_logins:
+                del pending_logins[clean_phone]
 
-        # Finalize session file only AFTER successful verification
-        if os.path.exists(f"{pending_sess_path}.session"):
-            os.replace(f"{pending_sess_path}.session", f"{final_sess_path}.session")
-        if os.path.exists(f"{pending_sess_path}.session-journal"):
-            os.replace(f"{pending_sess_path}.session-journal", f"{final_sess_path}.session-journal")
+            # Finalize session file only AFTER successful verification
+            if os.path.exists(f"{pending_sess_path}.session"):
+                os.replace(f"{pending_sess_path}.session", f"{final_sess_path}.session")
+            if os.path.exists(f"{pending_sess_path}.session-journal"):
+                os.replace(f"{pending_sess_path}.session-journal", f"{final_sess_path}.session-journal")
 
-        register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})")
+            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})")
 
-        return JSONResponse({
-            "success": True,
-            "session_file": f"{sess_stem}.session",
-            "user": {"name": display, "username": user_tag, "phone": clean_phone}
-        })
+            return JSONResponse({
+                "success": True,
+                "session_file": f"{sess_stem}.session",
+                "user": {"name": display, "username": user_tag, "phone": clean_phone}
+            })
 
-    except SessionPasswordNeededError:
-        return JSONResponse({"requires_2fa": True, "message": "2-Step Verification password required."})
-    except PhoneCodeInvalidError:
-        raise HTTPException(status_code=400, detail="Incorrect verification code.")
-    except PhoneCodeExpiredError:
-        raise HTTPException(status_code=400, detail="Verification code has expired. Request a new code.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except SessionPasswordNeededError:
+            return JSONResponse({"requires_2fa": True, "message": "2-Step Verification password required."})
+        except PhoneCodeInvalidError:
+            raise HTTPException(status_code=400, detail="Incorrect verification code.")
+        except PhoneCodeExpiredError:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if clean_phone in pending_logins:
+                del pending_logins[clean_phone]
+            raise HTTPException(status_code=400, detail="Verification code has expired. Request a new code.")
+        except Exception as e:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if clean_phone in pending_logins:
+                del pending_logins[clean_phone]
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/verify-2fa")
@@ -856,33 +942,45 @@ async def verify_2fa(payload: dict = Body(...)):
     pending_sess_path = item["pending_sess_path"]
     final_sess_path = item["final_sess_path"]
 
-    try:
-        await client.sign_in(password=password)
-        me = await client.get_me()
-        display = f"{me.first_name or ''} {me.last_name or ''}".strip()
-        user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
+    async with get_session_lock(sess_stem):
+        try:
+            await client.sign_in(password=password)
+            me = await client.get_me()
+            display = f"{me.first_name or ''} {me.last_name or ''}".strip()
+            user_tag = f"@{me.username}" if me.username else f"ID: {me.id}"
 
-        await client.disconnect()
-        del pending_logins[clean_phone]
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if clean_phone in pending_logins:
+                del pending_logins[clean_phone]
 
-        # Finalize session file only AFTER successful 2FA verification
-        if os.path.exists(f"{pending_sess_path}.session"):
-            os.replace(f"{pending_sess_path}.session", f"{final_sess_path}.session")
-        if os.path.exists(f"{pending_sess_path}.session-journal"):
-            os.replace(f"{pending_sess_path}.session-journal", f"{final_sess_path}.session-journal")
+            # Finalize session file only AFTER successful 2FA verification
+            if os.path.exists(f"{pending_sess_path}.session"):
+                os.replace(f"{pending_sess_path}.session", f"{final_sess_path}.session")
+            if os.path.exists(f"{pending_sess_path}.session-journal"):
+                os.replace(f"{pending_sess_path}.session-journal", f"{final_sess_path}.session-journal")
 
-        register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})", password=password)
+            register_account_in_db(sess_stem, clean_phone, f"{display} ({user_tag})", password=password)
 
-        return JSONResponse({
-            "success": True,
-            "session_file": f"{sess_stem}.session",
-            "user": {"name": display, "username": user_tag, "phone": clean_phone}
-        })
+            return JSONResponse({
+                "success": True,
+                "session_file": f"{sess_stem}.session",
+                "user": {"name": display, "username": user_tag, "phone": clean_phone}
+            })
 
-    except PasswordHashInvalidError:
-        raise HTTPException(status_code=400, detail="Incorrect 2FA Password.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        except PasswordHashInvalidError:
+            raise HTTPException(status_code=400, detail="Incorrect 2FA Password.")
+        except Exception as e:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+            if clean_phone in pending_logins:
+                del pending_logins[clean_phone]
+            raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # Mount static files and page routes
